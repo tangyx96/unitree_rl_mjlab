@@ -1,3 +1,8 @@
+"""速度跟踪任务的终止条件。
+
+- illegal_contact: 非足部位（膝盖/小腿等）触地则终止，
+  用于惩罚机器人摔倒或非正常接触。可设置力阈值过滤微小接触。
+"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

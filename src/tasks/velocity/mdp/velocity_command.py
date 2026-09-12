@@ -1,3 +1,15 @@
+"""均匀速度命令生成器。
+
+UniformVelocityCommand 在每个重采样间隔（3~8秒）随机生成速度指令 [vx, vy, ωz]。
+支持两种控制模式：
+1. 角速度控制：直接采样 ωz
+2. 航向控制：采样目标航向角，ωz = stiffness * heading_error
+
+还支持：
+- 静止环境：部分环境的命令始终为零
+- 初始速度匹配：重采样时将机器人速度设为命令值（加速收敛）
+- Viser GUI摇杆控制
+"""
 from __future__ import annotations
 
 from collections.abc import Callable

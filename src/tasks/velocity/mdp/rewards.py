@@ -1,3 +1,26 @@
+"""速度跟踪任务的奖励函数。
+
+所有奖励函数签名统一为 (env, ...) -> torch.Tensor [B]，
+返回每个环境的标量奖励值。正值为奖励，负值为惩罚。
+
+当前环境配置实际使用的项见 velocity_env_cfg.make_velocity_env_cfg()。
+本文件另含 feet_air_time、feet_swing_height、self_collision_cost 等未挂入该配置的函数。
+
+核心奖励：
+- track_linear_velocity: 跟踪机体系 xy 线速度（并惩罚 z 向速度）
+- track_angular_velocity: 跟踪机体系偏航角速度 ωz
+- variable_posture: 按命令速度分档的默认姿态偏差奖励
+- feet_gait: 触地相位与期望步态一致
+
+惩罚项：
+- body_orientation_l2: 机身倾斜
+- body_angular_velocity_penalty: 机身 roll/pitch 角速度
+- angular_momentum_penalty: 全身角动量
+- feet_clearance: 足端拖足
+- feet_slip: 足底滑行
+- soft_landing: 着地冲击
+- stand_still: 低速命令时关节偏离默认姿态
+"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -26,9 +49,11 @@ def track_linear_velocity(
   command_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Reward for tracking the commanded base linear velocity.
+  """跟踪线速度指令奖励。
 
-  The commanded z velocity is assumed to be zero.
+  公式: exp(-error / std²)
+  error = Σ(cmd_xy - actual_xy)² + 2 * actual_z²
+  z方向速度误差权重更大（假设z方向命令为零，不允许上下运动）。
   """
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
@@ -46,9 +71,13 @@ def track_angular_velocity(
   command_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Reward heading error for heading-controlled envs, angular velocity for others.
+  """跟踪偏航角速度指令奖励。
 
-  The commanded xy angular velocities are assumed to be zero.
+  比较的是命令 ωz 与机体系实际 ωz，不是航向角。
+  航向控制模式下，命令生成器已把航向误差换成 ωz，本项仍跟角速度。
+  假设 roll/pitch 角速度命令为零，权重 0.05。
+  公式: exp(-error / std²)
+  error = (cmd_z - actual_z)² + 0.05 * Σ(actual_xy)²
   """
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
@@ -122,7 +151,7 @@ def angular_momentum_penalty(
   env: ManagerBasedRlEnv,
   sensor_name: str,
 ) -> torch.Tensor:
-  """Penalize whole-body angular momentum to encourage natural arm swing."""
+  """Penalize whole-body angular momentum (discourages excessive torso twist)."""
   angmom_sensor: BuiltinSensor = env.scene[sensor_name]
   angmom = angmom_sensor.data
   angmom_magnitude_sq = torch.sum(torch.square(angmom), dim=-1)
@@ -194,6 +223,15 @@ def feet_gait(
         command_name: str,
         sensor_name: str,
 ) -> torch.Tensor:
+    """步态节奏奖励：鼓励足端接触状态与期望步态相位一致。
+
+    全局相位 = (时间 / 周期) mod 1.0
+    每条腿的相位 = (全局相位 + offset[i]) mod 1.0
+    期望：相位 < threshold 的腿应在支撑相（触地），否则在摆动相（腾空）
+    奖励 = 期望与实际一致的比例
+
+    Go2 腿顺序 FR,FL,RR,RL 且 offset=[0,0.5,0.5,0]：FR+RL 同相，FL+RR 同相 → 对角小跑（trot）
+    """
     sensor: ContactSensor = env.scene[sensor_name]
     is_contact = sensor.data.current_contact_time > 0
     global_phase = ((env.episode_length_buf * env.step_dt) / period).unsqueeze(1)
@@ -425,4 +463,3 @@ def stand_still(
             scale = (total_command <= command_threshold).float()
             reward *= scale
     return reward
-

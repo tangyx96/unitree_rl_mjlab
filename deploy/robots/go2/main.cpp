@@ -1,3 +1,6 @@
+// Go2部署入口：C++ FSM状态机控制真实机器人
+// 状态转换：Passive → FixStand → RLBase
+// 操作：按[L2+up]进入FixStand，按[R2+A]启动RL控制
 #include "FSM/CtrlFSM.h"
 #include "FSM/State_Passive.h"
 #include "FSM/State_FixStand.h"
@@ -9,6 +12,7 @@ std::shared_ptr<Keyboard> FSMState::keyboard = nullptr;
 
 void init_fsm_state()
 {
+    // 检查是否有其他进程占用lowcmd通道
     auto lowcmd_sub = std::make_shared<unitree::robot::go2::subscription::LowCmd>();
     usleep(0.2 * 1e6);
     if(!lowcmd_sub->isTimeout())
@@ -32,12 +36,12 @@ int main(int argc, char** argv)
     std::cout << " --- Unitree Robotics --- \n";
     std::cout << "     Go2 Controller \n";
 
-    // Unitree DDS Config
+    // Unitree DDS通信初始化（与机器人低层通信）
     unitree::robot::ChannelFactory::Instance()->Init(0, vm["network"].as<std::string>());
 
     init_fsm_state();
 
-    // Initialize FSM
+    // 初始化FSM状态机（从配置文件加载状态转换规则）
     auto fsm = std::make_unique<CtrlFSM>(param::config["FSM"]);
     fsm->start();
 
@@ -51,4 +55,3 @@ int main(int argc, char** argv)
     
     return 0;
 }
-

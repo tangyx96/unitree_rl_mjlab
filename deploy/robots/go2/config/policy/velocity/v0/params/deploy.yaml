@@ -1,24 +1,31 @@
+# Go2部署参数配置
+# 训练好的策略部署到真实机器人时使用此配置
+
+# 关节ID映射：仿真关节顺序 → 真实机器人电机ID
+# Go2的电机顺序为[FR_hip,FR_thigh,FR_calf,FL_hip,...]，与仿真中[FL,FR,RL,RR]不同
 joint_ids_map: [3,4,5,0,1,2,9,10,11,6,7,8,]
-step_dt: 0.02
+step_dt: 0.02  # 控制步长20ms（50Hz），与仿真decimation=4, dt=0.005一致
+# PD执行器参数（与仿真go2_constants.py一致）
 stiffness: [20, 20, 40, 20, 20, 40, 20, 20, 40, 20, 20, 40]
 damping:   [ 1,  1,  2,  1,  1,  2,  1,  1,  2,  1,  1,  2]
+# 默认关节位置（站立姿态）
 default_joint_pos: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]
 
 commands:
   base_velocity:
     ranges:
-      lin_vel_x: [-0.5, 1.0]
-      lin_vel_y: [-0.5, 0.5]
-      ang_vel_z: [-1.0, 1.0]
-      heading: null
+      lin_vel_x: [-0.5, 1.0]  # 前向速度范围（比训练时更保守）
+      lin_vel_y: [-0.5, 0.5]  # 横向速度范围
+      ang_vel_z: [-1.0, 1.0]  # 偏航角速度范围
+      heading: null  # 不使用航向控制
 actions:
   JointPositionAction:
-    clip: null
-    joint_names: [.*]
-    scale: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]
-    offset: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]
+    clip: null  # 不裁剪动作
+    joint_names: [.*]  # 所有关节
+    scale: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]  # 动作缩放（与训练一致）
+    offset: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]  # 默认关节位置偏移
     joint_ids: null
-observations:
+observations:  # 部署时的观测配置（仅actor观测，无特权信息）
   base_ang_vel:
     params: {}
     clip: null

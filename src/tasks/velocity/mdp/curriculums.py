@@ -1,3 +1,9 @@
+"""速度跟踪任务的课程学习函数。
+
+- terrain_levels_vel: 地形难度渐进，走得远的机器人升级到更难地形
+- commands_vel: 命令速度范围渐进，先小速度训练再逐步扩大
+- reward_weight: 奖励权重渐进，按训练步数调整奖励项权重
+"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypedDict, cast

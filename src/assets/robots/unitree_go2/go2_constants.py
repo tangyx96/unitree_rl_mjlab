@@ -1,4 +1,12 @@
-"""Unitree Go2 constants."""
+"""Go2机器人物理常量与模型配置。
+
+定义了Go2的：
+- MJCF模型路径和资源加载
+- 执行器参数（PD增益、力矩限制、转动惯量）
+- 初始关节姿态（站立姿态）
+- 碰撞配置（全身碰撞 vs 仅足部碰撞）
+- 机器人实体配置工厂函数 get_go2_robot_cfg()
+"""
 
 from pathlib import Path
 
@@ -37,16 +45,17 @@ def get_spec() -> mujoco.MjSpec:
 # Actuator config.
 ##
 
-GO2_ACTUATOR_HIP = BuiltinPositionActuatorCfg(
+# 执行器配置：PD位置控制器，Kp=刚度, Kd=阻尼, effort_limit=最大力矩
+GO2_ACTUATOR_HIP = BuiltinPositionActuatorCfg(  # 髋关节：Kp=20, Kd=1, τmax=23.5Nm
   target_names_expr=(
     ".*hip_.*",
   ),
   stiffness=20.0,
   damping=1.0,
   effort_limit=23.5,
-  armature=0.01,
+  armature=0.01,  # 转子反射惯量
 )
-GO2_ACTUATOR_THIGH = BuiltinPositionActuatorCfg(
+GO2_ACTUATOR_THIGH = BuiltinPositionActuatorCfg(  # 大腿关节：Kp=20, Kd=1, τmax=23.5Nm
   target_names_expr=(
     ".*thigh_.*",
   ),
@@ -55,7 +64,7 @@ GO2_ACTUATOR_THIGH = BuiltinPositionActuatorCfg(
   effort_limit=23.5,
   armature=0.01,
 )
-GO2_ACTUATOR_CALF = BuiltinPositionActuatorCfg(
+GO2_ACTUATOR_CALF = BuiltinPositionActuatorCfg(  # 小腿关节：Kp=40, Kd=2, τmax=45Nm（更大增益因承重）
   target_names_expr=(
     ".*calf_.*",
   ),
@@ -70,15 +79,16 @@ GO2_ACTUATOR_CALF = BuiltinPositionActuatorCfg(
 ##
 
 
+# 初始站立姿态：基座高0.32m，大腿前伸0.9rad，小腿后弯-1.8rad，髋关节微张
 INIT_STATE = EntityCfg.InitialStateCfg(
-  pos=(0.0, 0.0, 0.32),
+  pos=(0.0, 0.0, 0.32),  # 基座初始位置
   joint_pos={
-    ".*thigh_joint": 0.9,
-    ".*calf_joint": -1.8,
-    ".*R_hip_joint": 0.1,
-    ".*L_hip_joint": -0.1,
+    ".*thigh_joint": 0.9,  # 大腿前伸
+    ".*calf_joint": -1.8,  # 小腿后弯
+    ".*R_hip_joint": 0.1,  # 右髋微张
+    ".*L_hip_joint": -0.1,  # 左髋微张
   },
-  joint_vel={".*": 0.0},
+  joint_vel={".*": 0.0},  # 初始关节速度为零
 )
 
 ##
@@ -87,8 +97,7 @@ INIT_STATE = EntityCfg.InitialStateCfg(
 
 _foot_regex = "^[FR][LR]_foot_collision$"
 
-# This disables all collisions except the feet.
-# Furthermore, feet self collisions are disabled.
+# 仅足部碰撞：禁用所有碰撞几何，只保留足端碰撞（足端之间也不碰撞）
 FEET_ONLY_COLLISION = CollisionCfg(
   geom_names_expr=(_foot_regex,),
   contype=0,
@@ -99,8 +108,7 @@ FEET_ONLY_COLLISION = CollisionCfg(
   solimp=(0.9, 0.95, 0.023),
 )
 
-# This enables all collisions, excluding self collisions.
-# Foot collisions are given custom condim, friction and solimp.
+# 全身碰撞：启用所有碰撞几何（排除自碰撞），足端使用自定义condim/friction/solimp
 FULL_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision",),
   condim={_foot_regex: 3, ".*_collision": 1},
@@ -126,10 +134,9 @@ GO2_ARTICULATION = EntityArticulationInfoCfg(
 
 
 def get_go2_robot_cfg() -> EntityCfg:
-  """Get a fresh Go2 robot configuration instance.
+  """创建Go2机器人配置实例。
 
-  Returns a new EntityCfg instance each time to avoid mutation issues when
-  the config is shared across multiple places.
+  每次调用返回新实例，避免多处共享同一配置时的修改冲突。
   """
   return EntityCfg(
     init_state=INIT_STATE,

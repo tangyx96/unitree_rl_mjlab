@@ -1,4 +1,9 @@
-"""Unitree Go2 velocity environment configurations."""
+"""Go2速度跟踪环境配置。
+
+两层定制：
+1. unitree_go2_rough_env_cfg() — 在通用工厂基础上定制Go2专属参数（接触传感器、步态、奖励参数等）
+2. unitree_go2_flat_env_cfg() — 在rough基础上做减法：去地形、去高度扫描、降碰撞精度
+"""
 
 from typing import Literal
 
@@ -22,24 +27,34 @@ TerrainType = Literal["rough", "obstacles"]
 def unitree_go2_rough_env_cfg(
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Create Unitree Go2 rough terrain velocity configuration."""
+  """Go2粗糙地形速度跟踪配置。
+
+  在通用工厂make_velocity_env_cfg()基础上定制Go2专属参数：
+  - 机器人实体（Go2 MJCF模型+执行器）
+  - Raycast传感器frame设为base_link
+  - 足部/非足部接触传感器
+  - Go2专属奖励参数（步态offset、姿态标准差等）
+  - 非法接触终止条件
+  """
   cfg = make_velocity_env_cfg()
 
-  cfg.sim.mujoco.ccd_iterations = 500
+  cfg.sim.mujoco.ccd_iterations = 500  # Go2需要更多CCD迭代以处理足端碰撞
   cfg.sim.contact_sensor_maxmatch = 500
 
   cfg.scene.entities = {"robot": get_go2_robot_cfg()}
 
-  # Set raycast sensor frame to Go2 base_link.
+  # Raycast传感器frame设为Go2的base_link（机身）
   for sensor in cfg.scene.sensors or ():
     if sensor.name == "terrain_scan":
       assert isinstance(sensor, RayCastSensorCfg)
       sensor.frame.name = "base_link"
 
+  # Go2四足命名：FR=右前, FL=左前, RR=右后, RL=左后
   foot_names = ("FR", "FL", "RR", "RL")
   site_names = ("FR", "FL", "RR", "RL")
   geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
 
+  # 足部触地传感器：检测四足与地面的接触，用于步态奖励和足底滑行惩罚
   feet_ground_cfg = ContactSensorCfg(
     name="feet_ground_contact",
     primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),
@@ -47,8 +62,9 @@ def unitree_go2_rough_env_cfg(
     fields=("found", "force"),
     reduce="netforce",
     num_slots=1,
-    track_air_time=True,
+    track_air_time=True,  # 跟踪腾空/触地时间（critic 的 foot_air_time；步态奖励用触地时间）
   )
+  # 非足部触地传感器：检测膝盖/小腿等非足部位触地，用于非法接触终止
   nonfoot_ground_cfg = ContactSensorCfg(
     name="nonfoot_ground_touch",
     primary=ContactMatch(
@@ -101,25 +117,24 @@ def unitree_go2_rough_env_cfg(
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.5,
   }
 
-  cfg.rewards["foot_gait"].params["offset"] = [0.0, 0.5, 0.5, 0.0]
+  cfg.rewards["foot_gait"].params["offset"] = [0.0, 0.5, 0.5, 0.0]  # 腿顺序 FR,FL,RR,RL：FR+RL 同相(0)，FL+RR 同相(0.5) → 对角小跑
   cfg.rewards["body_orientation_l2"].params["asset_cfg"].body_names = ("base_link",)
   cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("base_link",)
   cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
 
-  cfg.terminations["illegal_contact"] = TerminationTermCfg(
+  cfg.terminations["illegal_contact"] = TerminationTermCfg(  # 非足部位触地力>10N则终止
     func=mdp.illegal_contact,
     params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
   )
 
-  # Apply play mode overrides.
+  # Play模式定制：推理/可视化时使用
   if play:
-    # Effectively infinite episode length.
-    cfg.episode_length_s = int(1e9)
+    cfg.episode_length_s = int(1e9)  # 无限episode长度
 
-    cfg.observations["actor"].enable_corruption = False
-    cfg.events.pop("push_robot", None)
-    cfg.curriculum = {}
+    cfg.observations["actor"].enable_corruption = False  # 关闭观测噪声
+    cfg.events.pop("push_robot", None)  # 关闭随机推力
+    cfg.curriculum = {}  # 关闭课程学习
     cfg.events["randomize_terrain"] = EventTermCfg(
       func=envs_mdp.randomize_terrain,
       mode="reset",
@@ -137,29 +152,39 @@ def unitree_go2_rough_env_cfg(
 
 
 def unitree_go2_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
-  """Create Unitree Go2 flat terrain velocity configuration."""
+  """Go2平坦地形速度跟踪配置。
+
+  在rough配置基础上做减法：
+  1. 地形改为平面（移除地形生成器）
+  2. 移除raycast传感器和height_scan观测（平地无需扫描地形）
+  3. 移除地形课程学习
+  4. 降低碰撞检测参数（平地更简单，无需高精度CCD）
+  5. Play模式下缩小速度命令范围
+  """
   cfg = unitree_go2_rough_env_cfg(play=play)
 
+  # 降低碰撞检测参数（平地场景更简单）
   cfg.sim.njmax = 300
-  cfg.sim.mujoco.ccd_iterations = 50
+  cfg.sim.mujoco.ccd_iterations = 50  # 平地只需50次CCD迭代（rough用500）
   cfg.sim.contact_sensor_maxmatch = 64
   cfg.sim.nconmax = None
 
-  # Switch to flat terrain.
+  # 切换为平坦地形
   assert cfg.scene.terrain is not None
   cfg.scene.terrain.terrain_type = "plane"
-  cfg.scene.terrain.terrain_generator = None
+  cfg.scene.terrain.terrain_generator = None  # 移除地形生成器
 
-  # Remove raycast sensor and height scan (no terrain to scan).
+  # 移除raycast传感器和height_scan观测（平地无需扫描地形）
   cfg.scene.sensors = tuple(
     s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"
   )
   del cfg.observations["actor"].terms["height_scan"]
   del cfg.observations["critic"].terms["height_scan"]
 
-  # Disable terrain curriculum (not present in play mode since rough clears all).
+  # 移除地形课程学习（平地无需渐进）
   cfg.curriculum.pop("terrain_levels", None)
 
+  # Play模式下缩小速度命令范围（更安全的演示速度）
   if play:
     twist_cmd = cfg.commands["twist"]
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
